@@ -65,7 +65,7 @@ app.post('/auth/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     await bcrypt.hash(password, 10, async function(err, hash) {
-      const user = new User({ username, email, hash });
+      const user = new User({ username, email, passwordHash: hash });
       await user.save();
       const token = generateToken(user);
       res.status(201).json({ token, user });
