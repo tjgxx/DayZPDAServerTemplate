@@ -1,7 +1,7 @@
 // Import required modules
 const express = require('express');
 const mongoose = require('mongoose');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
@@ -64,8 +64,7 @@ const generateToken = (user) => {
 app.post('/auth/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
+    const passwordHash = await bcrypt.hash(password, 10);
     const user = new User({ username, email, passwordHash });
     await user.save();
     const token = generateToken(user);
