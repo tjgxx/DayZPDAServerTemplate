@@ -64,11 +64,12 @@ const generateToken = (user) => {
 app.post('/auth/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
-    const passwordHash = await bcrypt.hash(password, 10);
-    const user = new User({ username, email, passwordHash });
-    await user.save();
-    const token = generateToken(user);
-    res.status(201).json({ token, user });
+    await bcrypt.hash(password, 10, async function(err, hash) {
+      const user = new User({ username, email, hash });
+      await user.save();
+      const token = generateToken(user);
+      res.status(201).json({ token, user });
+    });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
