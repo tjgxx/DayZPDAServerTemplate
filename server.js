@@ -177,6 +177,10 @@ app.get('/messages/global', authenticate, async (req, res) => {
   }
 });
 
+// 6762cc5b39d00d9a50084f47 Skif
+// 6762c9970c9b582d4830a10a NikolaiVoronov
+// 676449d6dd307bef7516d90c TestUser1
+
 // Direct Messages with Pagination
 app.get('/messages/direct', authenticate, async (req, res) => {
   try {
@@ -280,71 +284,60 @@ app.post('/friend-requests', authenticate, async (req, res) => {
       return res.status(400).json({ error: "You can't send a friend request to yourself." });
     }
 
-    const toUser = await User.findById(toUserId);
-    if (!toUser) return res.status(404).json({ error: 'User not found' });
+    const recipient  = await User.findById(toUserId);
+    if (!recipient ) return res.status(404).json({ error: 'User not found' });
 
-    const isAlreadyFriend = toUser.friends.includes(req.user.id);
+    const isAlreadyFriend = recipient.friends.includes(req.user.id);
     if (isAlreadyFriend) return res.status(400).json({ error: 'User is already your friend.' });
 
-    const existingRequest = toUser.friendRequests.find(
+    const existingRequest = recipient.friendRequests.find(
       (req) => req.from.toString() === req.user.id
     );
     if (existingRequest) return res.status(400).json({ error: 'Friend request already sent.' });
 
     // Add friend request
-    toUser.friendRequests.push({ from: req.user.id, to: toUserId });
-    await toUser.save();
+    recipient.friendRequests.push({ from: req.user.id, to: toUserId });
+    await recipient.save();
     res.status(201).json({ message: 'Friend request sent successfully.' });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-// Accept Friend Request
-app.post('/friend-requests/:id/accept', authenticate, async (req, res) => {
+// Respond to Friend Request
+app.post('/friend-requests/respond', authenticate, async (req, res) => {
   try {
-    const requestId = req.params.id;
+    const { requestId, status } = req.body;
 
-    const user = await User.findById(req.user.id).populate('friendRequests.from');
-    const request = user.friendRequests.find((req) => req._id.toString() === requestId);
-
-    if (!request || request.status !== 'pending') {
-      return res.status(404).json({ error: 'Friend request not found or already processed.' });
+    if (!['accepted', 'declined'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status.' });
     }
-
-    // Add each other as friends
-    user.friends.push(request.from._id);
-    const otherUser = await User.findById(request.from._id);
-    otherUser.friends.push(req.user.id);
-
-    // Update request status
-    request.status = 'accepted';
-    await user.save();
-    await otherUser.save();
-
-    res.json({ message: 'Friend request accepted.' });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// Decline Friend Request
-app.post('/friend-requests/:id/decline', authenticate, async (req, res) => {
-  try {
-    const requestId = req.params.id;
 
     const user = await User.findById(req.user.id);
-    const request = user.friendRequests.find((req) => req._id.toString() === requestId);
+    const request = user.friendRequests.id(requestId);
 
-    if (!request || request.status !== 'pending') {
-      return res.status(404).json({ error: 'Friend request not found or already processed.' });
+    if (!request) {
+      return res.status(404).json({ error: 'Friend request not found.' });
     }
 
-    // Update request status
-    request.status = 'declined';
+    request.status = status;
     await user.save();
 
-    res.json({ message: 'Friend request declined.' });
+    if (status === 'accepted') {
+      // Add users to each other's friend lists
+      const sender = await User.findById(request.from);
+      if (!sender) {
+        return res.status(404).json({ error: 'Sender not found.' });
+      }
+
+      user.friends.push(request.from);
+      sender.friends.push(req.user.id);
+
+      await user.save();
+      await sender.save();
+    }
+
+    res.json({ message: `Friend request ${status}.` });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
