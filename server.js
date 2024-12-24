@@ -32,7 +32,7 @@ const User = mongoose.model('User', new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   steamId: {type: String, required: true },
   passwordHash: { type: String, required: true },
-  createdAtST: { type: string, required: true },
+  createdAtST: { type: String, required: true },
   createdAtRT: { type: Date, default: Date.now },
   lastLoginRT: { type: Date, default: null },
   friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
