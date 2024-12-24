@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 
-app.use(function(req,res,next){
+app.use(function(_,res,next){
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, PATCH");
   res.header("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization, X-Requested-With");
@@ -32,15 +32,16 @@ const User = mongoose.model('User', new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   steamId: {type: String, required: true },
   passwordHash: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now },
-  lastLogin: { type: Date, default: null },
+  createdAtST: { type: string, required: true },
+  createdAtRT: { type: Date, default: Date.now },
+  lastLoginRT: { type: Date, default: null },
   friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   friendRequests: [{ 
     from: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     to: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    status: { type: String, enum: ['pending', 'accepted', 'declined'], default: 'pending' }
+    status: { type: String, enum: ['PENDING', 'ACCEPTED', 'DECLINED'], default: 'PENDING' }
   }],
-  faction: { type: String, enum: ['LONER', 'UKM', 'ECOLOGISTS', 'MERCS', 'CLEAR_SKY', 'BROTHERHOOD', 'DUTY', 'FREEDOM', 'MONOLITH', 'RENEGADES'], default: 'LONER' },
+  faction: { type: String, enum: ['LONER', 'UKM', 'ECOLOGIST', 'MERC', 'CLEAR_SKY', 'BROTHERHOOD', 'DUTY', 'FREEDOM', 'MONOLITH', 'RENEGADE'], default: 'LONER' },
   isOnline: {type: Boolean, default: false}
 }));
 
@@ -49,20 +50,20 @@ const Message = mongoose.model('Message', new mongoose.Schema({
   recipientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   content: { type: String, required: true },
   isAnonymous: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now },
+  createdAtRT: { type: Date, default: Date.now },
+  createdAtST: { type: string, required: true }
 }));
 
 const Note = mongoose.model('Note', new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   title: { type: String, required: true },
   content: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
+  createdAtRT: { type: Date, default: Date.now },
+  updatedAtRT: { type: Date, default: Date.now },
 }));
 
 // Helper Functions
 const generateToken = (user) => {
-  console.log('generateToken', user);
   return jwt.sign({ id: user._id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
 };
 
@@ -106,8 +107,6 @@ app.post('/auth/login', async (req, res) => {
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ error: 'No token provided' });
-
-  console.log(authHeader, 'token')
   jwt.verify(authHeader, process.env.JWT_SECRET, (err, decoded) => {
     if (err) return res.status(403).json({ error: 'Invalid token' });
     req.user = decoded;
@@ -158,8 +157,8 @@ app.get('/messages/global', authenticate, async (req, res) => {
     const totalMessages = await Message.countDocuments({ recipientId: null });
     const totalPages = Math.ceil(totalMessages / limit);
     const messages = await Message.find({ recipientId: null })
-      .populate('userId', 'username faction')
-      .sort({ createdAt: -1 }) // Sort by newest messages first
+      .populate('userId', 'username faction createdAtST')
+      .sort({ createdAtRT: -1 }) // Sort by newest messages first
       .skip((page - 1) * limit)
       .limit(limit);
 
@@ -197,11 +196,11 @@ app.get('/messages/direct', authenticate, async (req, res) => {
         { userId: recipientId, recipientId: req.user.id },
       ],
     })
-      .sort({ createdAt: -1 })
+      .sort({ createdAtRT: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('userId', 'username faction')
-      .populate('recipientId', 'username faction');
+      .populate('userId', 'username faction createdAtST')
+      .populate('recipientId', 'username faction createdAtST');
 
     const totalMessages = await Message.countDocuments({
       $or: [
@@ -225,7 +224,6 @@ app.get('/messages/direct', authenticate, async (req, res) => {
 app.post('/messages', authenticate, async (req, res) => {
   try {
     const message = new Message({ ...req.body, userId: req.user.id });
-    console.log(req.body);
     await message.save();
     res.status(201).json(message);
   } catch (error) {
@@ -309,7 +307,7 @@ app.post('/friend-requests/respond', authenticate, async (req, res) => {
   try {
     const { requestId, status } = req.body;
 
-    if (!['accepted', 'declined'].includes(status)) {
+    if (!['ACCEPTED', 'DECLINED'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status.' });
     }
 
@@ -323,7 +321,7 @@ app.post('/friend-requests/respond', authenticate, async (req, res) => {
     request.status = status;
     await user.save();
 
-    if (status === 'accepted') {
+    if (status === 'ACCEPTED') {
       // Add users to each other's friend lists
       const sender = await User.findById(request.from);
       if (!sender) {
@@ -337,6 +335,9 @@ app.post('/friend-requests/respond', authenticate, async (req, res) => {
       await sender.save();
     }
 
+    request.remove();
+    await user.save();
+
     res.json({ message: `Friend request ${status}.` });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -346,7 +347,7 @@ app.post('/friend-requests/respond', authenticate, async (req, res) => {
 // View Friend Requests
 app.get('/friend-requests', authenticate, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).populate('friendRequests.from', 'username');
+    const user = await User.findById(req.user.id).populate('friendRequests.from', 'username createdAtRT');
     const incomingRequests = user.friendRequests.filter((req) => req.status === 'pending');
     res.json(incomingRequests);
   } catch (error) {
@@ -356,5 +357,5 @@ app.get('/friend-requests', authenticate, async (req, res) => {
 
 // Start Server
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running`);
 });
