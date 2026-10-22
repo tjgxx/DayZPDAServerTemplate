@@ -20,10 +20,7 @@ app.use(function(_,res,next){
 });
 
 // Database Connection
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('Database connection error:', err));
 
@@ -223,7 +220,8 @@ app.get('/messages/direct', authenticate, async (req, res) => {
 
 app.post('/messages', authenticate, async (req, res) => {
   try {
-    const message = new Message({ ...req.body, userId: req.user.id });
+    const {content, createdAtST, userId} = req.body;
+    const message = new Message({ userId, createdAtST, content });
     await message.save();
     res.status(201).json(message);
   } catch (error) {
