@@ -89,9 +89,9 @@ app.post('/auth/login', async (req, res) => {
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) return res.status(401).json({ error: 'Invalid credentials' });
 
-    user.lastLogin = new Date();
+    user.lastLoginRT = new Date();
     user.isOnline = true;
-    await user.save();
+    await user.save({ validateModifiedOnly: true });
 
     const token = generateToken(user);
     res.json({ token, user });
