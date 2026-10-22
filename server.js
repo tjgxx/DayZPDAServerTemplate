@@ -72,9 +72,9 @@ const generateToken = (user) => {
 // Authentication Routes
 app.post('/auth/register', async (req, res) => {
   try {
-    const { username, password, steamId } = req.body;
+    const { username, password, steamId, createdAtST } = req.body;
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = new User({ username, passwordHash, steamId });
+    const user = new User({ username, passwordHash, steamId, createdAtST });
     await user.save();
     const token = generateToken(user);
     res.status(201).json({ token, user });
