@@ -51,7 +51,7 @@ const Message = mongoose.model('Message', new mongoose.Schema({
   content: { type: String, required: true },
   isAnonymous: { type: Boolean, default: false },
   createdAtRT: { type: Date, default: Date.now },
-  createdAtST: { type: string, required: true }
+  createdAtST: { type: String, required: true }
 }));
 
 const Note = mongoose.model('Note', new mongoose.Schema({
