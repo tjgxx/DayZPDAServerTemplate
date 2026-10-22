@@ -117,7 +117,7 @@ app.post('/auth/logout', authenticate, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     user.isOnline = false; // Mark as offline
-    await user.save();
+    await user.save({ validateModifiedOnly: true });
 
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
