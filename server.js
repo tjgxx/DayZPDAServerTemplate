@@ -59,6 +59,50 @@ const Note = mongoose.model('Note', new mongoose.Schema({
   updatedAtRT: { type: Date, default: Date.now },
 }));
 
+const Device = mongoose.model('Device', new mongoose.Schema({
+  deviceId: {
+    type: String,
+    required: true,
+    unique: true
+  },
+
+  accountId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+
+  isLoggedIn: {
+    type: Boolean,
+    default: false
+  },
+
+  pinEnabled: {
+    type: Boolean,
+    default: false
+  },
+
+  pinHash: {
+    type: String,
+    default: null
+  },
+
+  isDestroyed: {
+    type: Boolean,
+    default: false
+  },
+
+  sessionVersion: {
+    type: Number,
+    default: 0
+  },
+
+  lastActiveRT: {
+    type: Date,
+    default: Date.now
+  }
+}, { timestamps: true }));
+
 // Helper Functions
 const generateToken = (user) => {
   return jwt.sign({ id: user._id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -74,6 +118,19 @@ app.post('/auth/register', async (req, res) => {
     const user = new User({ username, passwordHash, steamId, createdAtST: new Date().toISOString() });
     await user.save();
     const token = generateToken(user);
+    
+    let device = await Device.findOne({ deviceId });
+
+    if (!device) {
+      device = new Device({ deviceId });
+    }
+
+    device.accountId = user._id;
+    device.isLoggedIn = true;
+    device.lastActiveRT = new Date();
+    device.sessionVersion += 1;
+
+    await device.save();
     res.status(201).json({ token, user });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -82,7 +139,7 @@ app.post('/auth/register', async (req, res) => {
 
 app.post('/auth/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, deviceId } = req.body;
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -94,6 +151,19 @@ app.post('/auth/login', async (req, res) => {
     await user.save({ validateModifiedOnly: true });
 
     const token = generateToken(user);
+
+    let device = await Device.findOne({ deviceId });
+
+    if (!device) {
+      device = new Device({ deviceId });
+    }
+
+    device.accountId = user._id;
+    device.isLoggedIn = true;
+    device.lastActiveRT = new Date();
+    device.sessionVersion += 1;
+
+    await device.save();
     res.json({ token, user });
   } catch (error) {
     res.status(400).json({ error: error.message });
