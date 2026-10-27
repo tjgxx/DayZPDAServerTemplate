@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 
-app.use(function(_,res,next){
+app.use(function (_, res, next) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, PATCH");
   res.header("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization, X-Requested-With");
@@ -27,19 +27,19 @@ mongoose.connect(process.env.MONGO_URI)
 // Models
 const User = mongoose.model('User', new mongoose.Schema({
   username: { type: String, required: true, unique: true },
-  steamId: {type: String, required: true },
+  steamId: { type: String, required: true },
   passwordHash: { type: String, required: true },
   createdAtST: { type: String, required: true },
   createdAtRT: { type: Date, default: Date.now },
   lastLoginRT: { type: Date, default: null },
   friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  friendRequests: [{ 
+  friendRequests: [{
     from: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     to: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     status: { type: String, enum: ['PENDING', 'ACCEPTED', 'DECLINED'], default: 'PENDING' }
   }],
   faction: { type: String, enum: ['LONER', 'UKM', 'ECOLOGIST', 'MERC', 'CLEAR_SKY', 'BROTHERHOOD', 'DUTY', 'FREEDOM', 'MONOLITH', 'RENEGADE'], default: 'LONER' },
-  isOnline: {type: Boolean, default: false}
+  isOnline: { type: Boolean, default: false }
 }));
 
 const Message = mongoose.model('Message', new mongoose.Schema({
@@ -113,12 +113,19 @@ const generateToken = (user) => {
 // Authentication Routes
 app.post('/auth/register', async (req, res) => {
   try {
-    const { username, password, steamId } = req.body;
+    const { username, password, steamId, deviceId } = req.body;
+
+    if (!username || !password || !steamId || !deviceId) {
+      return res.status(400).json({
+        error: 'Username, password, steamId, and deviceId are required'
+      });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     const user = new User({ username, passwordHash, steamId, createdAtST: new Date().toISOString() });
     await user.save();
     const token = generateToken(user);
-    
+
     let device = await Device.findOne({ deviceId });
 
     if (!device) {
@@ -133,13 +140,21 @@ app.post('/auth/register', async (req, res) => {
     await device.save();
     res.status(201).json({ token, user });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Regstration error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/auth/login', async (req, res) => {
   try {
     const { username, password, deviceId } = req.body;
+
+    if (!username || !password || !deviceId) {
+      return res.status(400).json({
+        error: 'Username, password, and deviceId are required'
+      });
+    }
+
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -166,7 +181,8 @@ app.post('/auth/login', async (req, res) => {
     await device.save();
     res.json({ token, user });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Login error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -290,7 +306,7 @@ app.get('/messages/direct', authenticate, async (req, res) => {
 
 app.post('/messages', authenticate, async (req, res) => {
   try {
-    const {content, createdAtST, userId} = req.body;
+    const { content, createdAtST, userId } = req.body;
     const message = new Message({ userId, createdAtST, content });
     await message.save();
     res.status(201).json(message);
@@ -350,8 +366,8 @@ app.post('/friend-requests', authenticate, async (req, res) => {
       return res.status(400).json({ error: "You can't send a friend request to yourself." });
     }
 
-    const recipient  = await User.findById(toUserId);
-    if (!recipient ) return res.status(404).json({ error: 'User not found' });
+    const recipient = await User.findById(toUserId);
+    if (!recipient) return res.status(404).json({ error: 'User not found' });
 
     const isAlreadyFriend = recipient.friends.includes(req.user.id);
     if (isAlreadyFriend) return res.status(400).json({ error: 'User is already your friend.' });
