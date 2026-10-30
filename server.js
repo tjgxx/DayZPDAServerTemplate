@@ -211,6 +211,40 @@ app.post('/auth/logout', authenticate, async (req, res) => {
   }
 });
 
+app.post('/auth/logout-device', async (req, res) => {
+  try {
+    const { token, deviceId } = req.body;
+    if (!token || !deviceId) {
+      return res.status(400).json({ error: 'Token and deviceId are required' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const device = await Device.findOne({ deviceId, accountId: decoded.id, isLoggedIn: true });
+    if (!device) return res.status(404).json({ error: 'Logged-in device not found' });
+
+    device.accountId = null;
+    device.isLoggedIn = false;
+    device.sessionVersion += 1;
+    device.lastActiveRT = new Date();
+    await device.save();
+
+    const hasOtherLoggedInDevices = await Device.exists({ accountId: decoded.id, isLoggedIn: true });
+    if (!hasOtherLoggedInDevices) {
+      await User.findByIdAndUpdate(decoded.id, { isOnline: false });
+    }
+
+    res.json({ message: 'Device logged out successfully' });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // User Routes
 app.post('/users', async (req, res) => {
   try {
@@ -258,10 +292,6 @@ app.get('/messages/global', authenticate, async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 });
-
-// 6762cc5b39d00d9a50084f47 Skif
-// 6762c9970c9b582d4830a10a NikolaiVoronov
-// 676449d6dd307bef7516d90c TestUser1
 
 // Direct Messages with Pagination
 app.get('/messages/direct', authenticate, async (req, res) => {
