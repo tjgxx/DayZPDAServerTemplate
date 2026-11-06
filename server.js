@@ -293,6 +293,54 @@ app.get('/messages/global', authenticate, async (req, res) => {
   }
 });
 
+// DayZ's RestContext can only set Content-Type, not Authorization, so the game client/server
+// authenticates this route via a query-string token instead of the standard auth middleware.
+app.get('/messages/global-feed', async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const totalMessages = await Message.countDocuments({ recipientId: null });
+    const totalPages = Math.ceil(totalMessages / limit);
+    const messages = await Message.find({ recipientId: null })
+      .populate('userId', 'username faction createdAtST')
+      .sort({ createdAtRT: -1 }) // Sort by newest messages first
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    res.json({
+      metadata: {
+        totalMessages,
+        currentPage: page,
+        totalPages,
+        limit,
+      },
+      messages: messages.map((m) => ({
+        _id: m._id,
+        userId: m.userId,
+        content: m.content,
+        isAnonymous: m.isAnonymous,
+        createdAtST: m.createdAtST,
+        isMine: m.userId._id.toString() === decoded.id,
+      })),
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // Direct Messages with Pagination
 app.get('/messages/direct', authenticate, async (req, res) => {
   try {
