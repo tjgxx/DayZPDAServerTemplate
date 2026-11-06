@@ -393,6 +393,43 @@ app.post('/messages', authenticate, async (req, res) => {
   }
 });
 
+// DayZ's RestContext can only set Content-Type, not Authorization, so this takes the token in the
+// body instead of using the `authenticate` middleware. userId is derived from the token, never trusted from the client.
+app.post('/messages/global-send', async (req, res) => {
+  try {
+    const { token, content } = req.body;
+    if (!token || !content) {
+      return res.status(400).json({ error: 'Token and content are required' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const message = new Message({
+      userId: decoded.id,
+      content,
+      createdAtST: new Date().toISOString(),
+    });
+    await message.save();
+    await message.populate('userId', 'username faction createdAtST');
+
+    res.status(201).json({
+      _id: message._id,
+      userId: message.userId,
+      content: message.content,
+      isAnonymous: message.isAnonymous,
+      createdAtST: message.createdAtST,
+      isMine: true,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // Notes Routes
 app.get('/notes/:userId', authenticate, async (req, res) => {
   try {
