@@ -71,7 +71,7 @@ app.post('/auth/register', async (req, res) => {
   try {
     const { username, password, steamId } = req.body;
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = new User({ username, passwordHash, steamId, createdAtST: new Date().toISOString() });
+    const user = new User({ username: username.trim().toLowerCase(), passwordHash, steamId, createdAtST: new Date().toISOString() });
     await user.save();
     const token = generateToken(user);
     res.status(201).json({ token, user });
