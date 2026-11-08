@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 
-app.use(function(_,res,next){
+app.use(function (_, res, next) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, PATCH");
   res.header("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization, X-Requested-With");
@@ -27,19 +27,19 @@ mongoose.connect(process.env.MONGO_URI)
 // Models
 const User = mongoose.model('User', new mongoose.Schema({
   username: { type: String, required: true, unique: true },
-  steamId: {type: String, required: true },
+  steamId: { type: String, required: true },
   passwordHash: { type: String, required: true },
   createdAtST: { type: String, required: true },
   createdAtRT: { type: Date, default: Date.now },
   lastLoginRT: { type: Date, default: null },
   friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  friendRequests: [{ 
+  friendRequests: [{
     from: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     to: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     status: { type: String, enum: ['PENDING', 'ACCEPTED', 'DECLINED'], default: 'PENDING' }
   }],
   faction: { type: String, enum: ['LONER', 'UKM', 'ECOLOGIST', 'MERC', 'CLEAR_SKY', 'BROTHERHOOD', 'DUTY', 'FREEDOM', 'MONOLITH', 'RENEGADE'], default: 'LONER' },
-  isOnline: {type: Boolean, default: false}
+  isOnline: { type: Boolean, default: false }
 }));
 
 const Message = mongoose.model('Message', new mongoose.Schema({
@@ -59,6 +59,50 @@ const Note = mongoose.model('Note', new mongoose.Schema({
   updatedAtRT: { type: Date, default: Date.now },
 }));
 
+const Device = mongoose.model('Device', new mongoose.Schema({
+  deviceId: {
+    type: String,
+    required: true,
+    unique: true
+  },
+
+  accountId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+
+  isLoggedIn: {
+    type: Boolean,
+    default: false
+  },
+
+  pinEnabled: {
+    type: Boolean,
+    default: false
+  },
+
+  pinHash: {
+    type: String,
+    default: null
+  },
+
+  isDestroyed: {
+    type: Boolean,
+    default: false
+  },
+
+  sessionVersion: {
+    type: Number,
+    default: 0
+  },
+
+  lastActiveRT: {
+    type: Date,
+    default: Date.now
+  }
+}, { timestamps: true }));
+
 // Helper Functions
 const generateToken = (user) => {
   return jwt.sign({ id: user._id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -69,20 +113,48 @@ const generateToken = (user) => {
 // Authentication Routes
 app.post('/auth/register', async (req, res) => {
   try {
-    const { username, password, steamId } = req.body;
+    const { username, password, steamId, deviceId } = req.body;
+
+    if (!username || !password || !steamId || !deviceId) {
+      return res.status(400).json({
+        error: 'Username, password, steamId, and deviceId are required'
+      });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     const user = new User({ username: username.trim().toLowerCase(), passwordHash, steamId, createdAtST: new Date().toISOString() });
     await user.save();
     const token = generateToken(user);
+
+    let device = await Device.findOne({ deviceId });
+
+    if (!device) {
+      device = new Device({ deviceId });
+    }
+
+    device.accountId = user._id;
+    device.isLoggedIn = true;
+    device.lastActiveRT = new Date();
+    device.sessionVersion += 1;
+
+    await device.save();
     res.status(201).json({ token, user });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Regstration error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/auth/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, deviceId } = req.body;
+
+    if (!username || !password || !deviceId) {
+      return res.status(400).json({
+        error: 'Username, password, and deviceId are required'
+      });
+    }
+
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -94,9 +166,23 @@ app.post('/auth/login', async (req, res) => {
     await user.save({ validateModifiedOnly: true });
 
     const token = generateToken(user);
+
+    let device = await Device.findOne({ deviceId });
+
+    if (!device) {
+      device = new Device({ deviceId });
+    }
+
+    device.accountId = user._id;
+    device.isLoggedIn = true;
+    device.lastActiveRT = new Date();
+    device.sessionVersion += 1;
+
+    await device.save();
     res.json({ token, user });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Login error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -120,6 +206,40 @@ app.post('/auth/logout', authenticate, async (req, res) => {
     await user.save({ validateModifiedOnly: true });
 
     res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/auth/logout-device', async (req, res) => {
+  try {
+    const { token, deviceId } = req.body;
+    if (!token || !deviceId) {
+      return res.status(400).json({ error: 'Token and deviceId are required' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const device = await Device.findOne({ deviceId, accountId: decoded.id, isLoggedIn: true });
+    if (!device) return res.status(404).json({ error: 'Logged-in device not found' });
+
+    device.accountId = null;
+    device.isLoggedIn = false;
+    device.sessionVersion += 1;
+    device.lastActiveRT = new Date();
+    await device.save();
+
+    const hasOtherLoggedInDevices = await Device.exists({ accountId: decoded.id, isLoggedIn: true });
+    if (!hasOtherLoggedInDevices) {
+      await User.findByIdAndUpdate(decoded.id, { isOnline: false });
+    }
+
+    res.json({ message: 'Device logged out successfully' });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -173,9 +293,53 @@ app.get('/messages/global', authenticate, async (req, res) => {
   }
 });
 
-// 6762cc5b39d00d9a50084f47 Skif
-// 6762c9970c9b582d4830a10a NikolaiVoronov
-// 676449d6dd307bef7516d90c TestUser1
+// DayZ's RestContext can only set Content-Type, not Authorization, so the game client/server
+// authenticates this route via a query-string token instead of the standard auth middleware.
+app.get('/messages/global-feed', async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const totalMessages = await Message.countDocuments({ recipientId: null });
+    const totalPages = Math.ceil(totalMessages / limit);
+    const messages = await Message.find({ recipientId: null })
+      .populate('userId', 'username faction createdAtST')
+      .sort({ createdAtRT: -1 }) // Sort by newest messages first
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    res.json({
+      metadata: {
+        totalMessages,
+        currentPage: page,
+        totalPages,
+        limit,
+      },
+      messages: messages.map((m) => ({
+        _id: m._id,
+        userId: m.userId,
+        content: m.content,
+        isAnonymous: m.isAnonymous,
+        createdAtST: m.createdAtST,
+        isMine: m.userId._id.toString() === decoded.id,
+      })),
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
 
 // Direct Messages with Pagination
 app.get('/messages/direct', authenticate, async (req, res) => {
@@ -220,10 +384,47 @@ app.get('/messages/direct', authenticate, async (req, res) => {
 
 app.post('/messages', authenticate, async (req, res) => {
   try {
-    const {content, createdAtST, userId} = req.body;
+    const { content, createdAtST, userId } = req.body;
     const message = new Message({ userId, createdAtST, content });
     await message.save();
     res.status(201).json(message);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// DayZ's RestContext can only set Content-Type, not Authorization, so this takes the token in the
+// body instead of using the `authenticate` middleware. userId is derived from the token, never trusted from the client.
+app.post('/messages/global-send', async (req, res) => {
+  try {
+    const { token, content } = req.body;
+    if (!token || !content) {
+      return res.status(400).json({ error: 'Token and content are required' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const message = new Message({
+      userId: decoded.id,
+      content,
+      createdAtST: new Date().toISOString(),
+    });
+    await message.save();
+    await message.populate('userId', 'username faction createdAtST');
+
+    res.status(201).json({
+      _id: message._id,
+      userId: message.userId,
+      content: message.content,
+      isAnonymous: message.isAnonymous,
+      createdAtST: message.createdAtST,
+      isMine: true,
+    });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -280,8 +481,8 @@ app.post('/friend-requests', authenticate, async (req, res) => {
       return res.status(400).json({ error: "You can't send a friend request to yourself." });
     }
 
-    const recipient  = await User.findById(toUserId);
-    if (!recipient ) return res.status(404).json({ error: 'User not found' });
+    const recipient = await User.findById(toUserId);
+    if (!recipient) return res.status(404).json({ error: 'User not found' });
 
     const isAlreadyFriend = recipient.friends.includes(req.user.id);
     if (isAlreadyFriend) return res.status(400).json({ error: 'User is already your friend.' });
