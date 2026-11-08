@@ -154,8 +154,8 @@ app.post('/auth/login', async (req, res) => {
         error: 'Username, password, and deviceId are required'
       });
     }
-
-    const user = await User.findOne({ username });
+    const user = await User.findOne({ username: username.trim().toLowerCase() });
+    
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
