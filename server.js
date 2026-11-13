@@ -87,6 +87,9 @@ const Device = mongoose.model('Device', new mongoose.Schema({
     default: null
   },
 
+  pinAttempts: { type: Number, default: 0 },
+  pinAttemptWindowEnds: { type: Date, default: null },
+
   isDestroyed: {
     type: Boolean,
     default: false
@@ -134,6 +137,10 @@ app.post('/auth/register', async (req, res) => {
 
     device.accountId = user._id;
     device.isLoggedIn = true;
+    device.pinEnabled = false;
+    device.pinHash = null;
+    device.pinAttempts = 0;
+    device.pinAttemptWindowEnds = null;
     device.lastActiveRT = new Date();
     device.sessionVersion += 1;
 
@@ -175,6 +182,10 @@ app.post('/auth/login', async (req, res) => {
 
     device.accountId = user._id;
     device.isLoggedIn = true;
+    device.pinEnabled = false;
+    device.pinHash = null;
+    device.pinAttempts = 0;
+    device.pinAttemptWindowEnds = null;
     device.lastActiveRT = new Date();
     device.sessionVersion += 1;
 
@@ -230,6 +241,10 @@ app.post('/auth/logout-device', async (req, res) => {
 
     device.accountId = null;
     device.isLoggedIn = false;
+    device.pinEnabled = false;
+    device.pinHash = null;
+    device.pinAttempts = 0;
+    device.pinAttemptWindowEnds = null;
     device.sessionVersion += 1;
     device.lastActiveRT = new Date();
     await device.save();
@@ -242,6 +257,64 @@ app.post('/auth/logout-device', async (req, res) => {
     res.json({ message: 'Device logged out successfully' });
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+// These routes are called by the game server, which keeps the device token private.
+app.post('/auth/device-pin', async (req, res) => {
+  try {
+    const { token, deviceId, operation, pin } = req.body;
+    if (!token || !deviceId || !['status', 'set', 'verify', 'disable'].includes(operation)) {
+      return res.status(400).json({ error: 'Invalid device PIN request' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const filter = { deviceId, accountId: decoded.id, isLoggedIn: true };
+    const device = await Device.findOne(filter);
+    if (!device) return res.status(404).json({ error: 'Logged-in device not found' });
+
+    if (operation === 'status') {
+      return res.json({ success: true, pinEnabled: device.pinEnabled });
+    }
+    if (operation === 'disable') {
+      await Device.updateOne(filter, { $set: { pinEnabled: false, pinHash: null, pinAttempts: 0, pinAttemptWindowEnds: null } });
+      return res.json({ success: true, pinEnabled: false });
+    }
+    if (typeof pin !== 'string' || !/^[0-9]{4}$/.test(pin)) {
+      return res.status(400).json({ error: 'PIN must contain four digits' });
+    }
+    if (operation === 'set') {
+      const pinHash = await bcrypt.hash(pin, 10);
+      const updated = await Device.updateOne({ ...filter, pinEnabled: false }, { $set: { pinEnabled: true, pinHash, pinAttempts: 0, pinAttemptWindowEnds: null } });
+      if (!updated.modifiedCount) return res.json({ success: false, pinEnabled: true, message: 'PIN is already enabled' });
+      return res.json({ success: true, pinEnabled: true });
+    }
+    if (!device.pinEnabled || !device.pinHash) {
+      return res.json({ success: false, pinEnabled: device.pinEnabled, message: 'PIN is not available' });
+    }
+
+    const now = new Date();
+    await Device.updateOne({ ...filter, pinAttemptWindowEnds: { $lte: now } }, { $set: { pinAttempts: 0, pinAttemptWindowEnds: null } });
+    await Device.updateOne({ ...filter, pinAttemptWindowEnds: null }, { $set: { pinAttemptWindowEnds: new Date(now.getTime() + 60000) } });
+    const attempt = await Device.findOneAndUpdate(
+      { ...filter, pinEnabled: true, pinHash: device.pinHash, pinAttempts: { $lt: 5 } },
+      { $inc: { pinAttempts: 1 } }, { new: true }
+    );
+    if (!attempt) return res.json({ success: false, pinEnabled: true, message: 'Too many attempts. Try again in a minute.' });
+    if (!await bcrypt.compare(pin, attempt.pinHash)) {
+      return res.json({ success: false, pinEnabled: true, message: 'Incorrect PIN' });
+    }
+    await Device.updateOne({ ...filter, pinHash: attempt.pinHash }, { $set: { pinAttempts: 0, pinAttemptWindowEnds: null } });
+    return res.json({ success: true, pinEnabled: true });
+  } catch (error) {
+    console.error('Device PIN error:', error);
+    return res.status(500).json({ error: 'Device PIN service failed' });
   }
 });
 
